@@ -1,20 +1,16 @@
 ```
 Distribution      : CentOS 6.4
-GitLab version    : 6.0
+GitLab version    : 6.0 - 6.2
 Web Server        : Apache, Nginx
 Init system       : sysvinit
-Database          : mysql
-Contributors      : @nielsbasjes, @axilleas, @mairin, @ponsjuh, @yorn
-Additional Notes  : In order to get the latest git version we build it from source
+Database          : MySQL, PostgreSQL
+Contributors      : @nielsbasjes, @axilleas, @mairin, @ponsjuh, @yorn, @psftw
+Additional Notes  : In order to get a proper Ruby setup we build it from source
 ```
 
 ## Overview
 
 Please read `doc/install/requirements.md` for hardware and platform requirements.
-
-This guide installs GitLab on a bare system from scratch, using MySQL as the database.
-All Postgres installation steps are absent as they have not been tested yet.
-Pull requests with tested Postgres are welcome!
 
 ### Important Notes
 
@@ -76,7 +72,7 @@ As part of the Fedora packaging community, EPEL packages are 100% free/libre ope
 
 Download the GPG key for EPEL repository from [fedoraproject][keys] and install it on your system:
 
-    sudo wget -O /etc/pki/rpm-gpg/RPM-GPG-KEY-EPEL-6 https://fedoraproject.org/static/0608B895.txt
+    sudo wget -O /etc/pki/rpm-gpg/RPM-GPG-KEY-EPEL-6 https://www.fedoraproject.org/static/0608B895.txt
     sudo rpm --import /etc/pki/rpm-gpg/RPM-GPG-KEY-EPEL-6
 
 Verify that the key got installed successfully:
@@ -90,29 +86,39 @@ Now install the `epel-release-6-8.noarch` package, which will enable EPEL reposi
 
 **Note:** Don't mind the `x86_64`, if you install on a i686 system you can use the same commands.
 
-Verify that the EPEL repository is enabled as shown below. Now, you’ll see epel
-repository (apart from the standard base, updates and extras repositories):
+### Add PUIAS Computational repository
+
+The [PUIAS Computational][PUIAS] repository is a part of [PUIAS/Springdale Linux][SDL],
+a custom Red Hat&reg; distribution maintained by [Princeton University][PU] and the
+[Institute for Advanced Study][IAS].  We take advantage of the PUIAS
+Computational repository to obtain a git v1.8.x package since the base CentOS
+repositories only provide v1.7.1 which is not compatible with GitLab.
+
+Install the PUIAS Computational repository rpm
+
+    sudo rpm -Uvh http://puias.math.ias.edu/data/puias/6/x86_64/os/Packages/springdale-computational-6-2.sdl6.10.noarch.rpmo
+
+Verify that the EPEL and PUIAS Computational repositories are enabled as shown below:
 
     sudo yum repolist
-    repo id             repo name                                                status
-    base                CentOS-6 - Base                                          4,802
-    epel                Extra Packages for Enterprise Linux 6 - x86_64           7,879
-    extras              CentOS-6 - Extras                                           12
-    updates             CentOS-6 - Updates                                         814
-    repolist: 13,507
+    repo id                 repo name                                                status
+    PUIAS_6_computational   PUIAS computational Base 6 - x86_64                      2,018
+    base                    CentOS-6 - Base                                          4,802
+    epel                    Extra Packages for Enterprise Linux 6 - x86_64           7,879
+    extras                  CentOS-6 - Extras                                           12
+    updates                 CentOS-6 - Updates                                         814
+    repolist: 15,525
 
-If you can't see it listed, use the folowing command to enable it:
+If you can't see them listed, use the folowing command (from yum-utils package) to enable them:
 
-    sudo yum-config-manager --enable epel
+    sudo yum-config-manager --enable epel --enable PUIAS_6_computational
 
 ### Install the required tools for GitLab
 
     su -
     yum -y update
     yum -y groupinstall 'Development Tools'
-
-    ### 'Additional Development'
-    yum -y install vim-enhanced readline readline-devel ncurses-devel gdbm-devel glibc-devel tcl-devel openssl-devel curl-devel expat-devel db4-devel byacc sqlite-devel gcc-c++ libyaml libyaml-devel libffi libffi-devel libxml2 libxml2-devel libxslt libxslt-devel libicu libicu-devel system-config-firewall-tui python-devel redis sudo wget crontabs logwatch logrotate perl-Time-HiRes
+    yum -y install vim-enhanced readline readline-devel ncurses-devel gdbm-devel glibc-devel tcl-devel openssl-devel curl-devel expat-devel db4-devel byacc sqlite-devel gcc-c++ libyaml libyaml-devel libffi libffi-devel libxml2 libxml2-devel libxslt libxslt-devel libicu libicu-devel system-config-firewall-tui python-devel redis sudo wget crontabs logwatch logrotate perl-Time-HiRes git
 
 **RHEL Notes**
 
@@ -122,32 +128,6 @@ add the rhel6 optional packages repo to your server to get those packages:
     yum-config-manager --enable rhel-6-server-optional-rpms
 
 Tip taken from [here](https://github.com/gitlabhq/gitlab-recipes/issues/62).
-
-### Git
-
-GitLab will only work correctly with git version 1.8.x or newer. The problem is
-that the available rpms for CentOS stop at git 1.7.1 which is too old for GitLab.
-In order to update, you have to build git from source as it is not yet in any repository:
-
-    su -
-    cd /tmp
-    yum -y install git perl-ExtUtils-MakeMaker
-    git clone git://github.com/git/git.git
-    cd /tmp/git/
-    git checkout v1.8.3.4
-    autoconf
-    ./configure --prefix=/usr/local
-    make && make install
-    rm -rf /tmp/git/
-    yum erase git
-
-Logout and login again for the `$PATH` to take effect. Check that git is properly
-installed with:
-
-    which git
-    # /usr/local/bin/git
-    git --version
-    # git version 1.8.3.4
 
 ### Configure redis
 Make sure redis is started on boot:
@@ -254,10 +234,15 @@ git clone https://github.com/gitlabhq/gitlab-shell.git
 cd gitlab-shell
 
 # Switch to right version
-git checkout v1.7.0
+git checkout v1.7.4
 cp config.yml.example config.yml
 
 # Edit config and replace gitlab_url with something like 'http://domain.com/'
+#
+# Note, 'gitlab_url' is used by gitlab-shell to access GitLab API. Since 
+#     1. the whole communication is locally
+#     2. next steps will explain how to expose GitLab over HTTPS with custom cert
+# it's a good solution is to set gitlab_url as "http://localhost:8080/"
 
 # Do setup
 ./bin/install
@@ -265,6 +250,8 @@ cp config.yml.example config.yml
 ----------
 
 ## 5. Database
+
+### 5.1 MySQL
 
 Install `mysql` and enable the `mysqld` service to start on boot:
 
@@ -301,6 +288,41 @@ Try connecting to the new database with the new user:
     # Quit the database session
     \q
 
+### 5.2 PostgreSQL
+
+Install `postgresql-server` and the `postgreqsql-devel` libraries.
+
+    su -
+    yum install postgresql-server postgresql-devel
+
+Initialize the database.
+
+    service postgresql initdb
+
+Start the service and configure service to start on boot
+
+    service postgresql start
+    chkconfig postgresql on
+
+Configure the database user and password.
+
+    su - postgres
+    psql -d template1
+    psql (8.4.13)
+
+    template1=# CREATE USER git WITH PASSWORD 'your-password-here';
+    CREATE ROLE
+    template1=# CREATE DATABASE gitlabhq_production OWNER git;
+    CREATE DATABASE
+    template1=# \q
+    exit # exit uid=postgres, return to root
+
+Test the connection as the gitlab (uid=git) user.
+
+    su - git
+    psql -d gitlabhq_production -W # prompts for your password.
+
+
 ----------
 ## 6. GitLab
 
@@ -318,9 +340,9 @@ We'll install GitLab into home directory of the user `git`:
     cd /home/git/gitlab
 
     # Checkout to stable release
-    git checkout 6-0-stable
+    git checkout 6-2-stable
 
-**Note:** You can change `6-0-stable` to `master` if you want the *bleeding edge* version, but
+**Note:** You can change `6-2-stable` to `master` if you want the *bleeding edge* version, but
 do so with caution!
 
 ### Configure it
@@ -331,9 +353,6 @@ cp config/gitlab.yml.example config/gitlab.yml
 
 # Replace your_domain_name with the fully-qualified domain name of your host serving GitLab
 sed -i 's|localhost|your_domain_name|g' config/gitlab.yml
-
-# Change git's path to point to /usr/local/bin/git
-sed -i 's|/usr/bin/git|/usr/local/bin/git|' config/gitlab.yml
 
 # Make sure GitLab can write to the log/ and tmp/ directories
 chown -R git log/
@@ -375,7 +394,24 @@ git config --global core.autocrlf input
     # MySQL
     cp config/database.yml{.mysql,}
 
+    # PostgreSQL 
+    cp config/database.yml{.postgresql,}
+
 Make sure to update username/password in `config/database.yml`. You only need to adapt the production settings (first part).
+
+    # PostgreSQL example config/database.yml
+    # disable host/port in order to support the default postgresql ident auth
+    # PRODUCTION
+    production:
+      adapter: postgresql
+      encoding: unicode
+      database: gitlabhq_production
+      pool: 5
+      username: git
+      password: your-password-here
+      #host: localhost
+      #port: 5432 
+      # socket: /tmp/postgresql.sock 
 
 If you followed the database guide then please do as follows:
 * Change `root` to `gitlab`.
@@ -443,7 +479,17 @@ To make sure you didn't miss anything run a more thorough check with:
     cd gitlab/
     bundle exec rake gitlab:check RAILS_ENV=production
 
-If all items are green, then congratulations on successfully installing GitLab!
+Now, the output will complain that your init script is not up-to-date as follows:
+
+Init script up-to-date? ... no  
+  Try fixing it:  
+  Redownload the init script  
+  For more information see:  
+  doc/install/installation.md in section "Install Init Script"  
+  Please fix the error above and rerun the checks.  
+
+Do not care about it  if you are sure that you have downloaded the up-to-date file from https://raw.github.com/gitlabhq/gitlab-recipes/master/init/sysvinit/centos/gitlab-unicorn and saved it to /etc/init.d/gitlab.  
+If all other items are green, then congratulations on successfully installing GitLab!
 However there are still a few steps left.
 
 ## 7. Configure the web server
@@ -538,10 +584,13 @@ You will then be redirected to change the default admin password.
 ## Links used in this guide
 
 - [EPEL information](http://www.thegeekstuff.com/2012/06/enable-epel-repository/)
-- [git update to 1.8.x](http://www.pickysysadmin.ca/2013/05/21/commit-comments-not-appearing-in-gitlab-on-centos/)
 - [SELinux booleans](http://wiki.centos.org/TipsAndTricks/SelinuxBooleans)
 
 
 [EPEL]: https://fedoraproject.org/wiki/EPEL
+[PUIAS]: https://puias.math.ias.edu/wiki/YumRepositories6#Computational
+[SDL]: https://puias.math.ias.edu
+[PU]: http://www.princeton.edu/
+[IAS]: http://www.ias.edu/
 [keys]: https://fedoraproject.org/keys
 [sudo]: http://stackoverflow.com/questions/257616/sudo-changes-path-why
